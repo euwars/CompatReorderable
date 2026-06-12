@@ -112,6 +112,21 @@ if #available(iOS 27.0, *) {
 
 These platforms have no drag-and-drop interactions to build on (the native watchOS 27 API also runs without them), so CompatReorderable uses a SwiftUI gesture backend: the cell itself becomes the floating preview. On watchOS the drag starts after a 0.4s long press (touch scrolling wins until then; crown scrolling is unaffected); on macOS it starts straight from a small click-drag, matching AppKit's reorder feel — Mac scrolling doesn't claim click-drags, so there's no conflict. Differences from the iOS backend: no system lift animation, no context-menu integration, and no edge auto-scroll.
 
+## Customizing animations
+
+Every timing the library owns lives in `CompatReorderAnimations`, with platform-tuned defaults. Override any of them through the environment:
+
+```swift
+var animations = CompatReorderAnimations()
+animations.gapReflow = .spring(response: 0.45, dampingFraction: 0.85)
+animations.dropReveal = .easeIn(duration: 0.25)
+
+ScrollView { ... }
+    .compatReorderAnimations(animations)
+```
+
+`gapReflow` and `dropReveal` apply everywhere; `lift` and `settle` drive the self-rendered watchOS/macOS backend (on iOS/visionOS those phases are the system's own drag animations).
+
 ## Behavior notes & limitations
 
 - Retargeting feel matches the native API: the gap moves once the finger is ~20% into the destination cell, the gap under the finger is a dead zone, and a short cooldown absorbs reflow animations — items cannot "dance."

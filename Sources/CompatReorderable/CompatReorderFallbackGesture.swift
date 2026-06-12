@@ -56,8 +56,7 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
               let content = coordinator.previewContentProvider?(itemID)
         else { return }
         liftFrame = coordinator.frames[itemID] ?? .zero
-        coordinator.gapAnimation = .spring(response: 0.5, dampingFraction: 0.8)
-        withAnimation(.snappy(duration: 0.3)) {
+        withAnimation(coordinator.animations.lift) {
             coordinator.beginDrag(id: itemID)
             coordinator.fallbackPreview = .init(content: content, frame: liftFrame)
         }
@@ -77,7 +76,7 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
 
         // Settle: glide the preview into the item's slot, then unhide.
         let slotFrame = coordinator.frames[itemID] ?? liftFrame
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+        withAnimation(coordinator.animations.settle) {
             coordinator.fallbackPreview?.frame = slotFrame
             coordinator.fallbackPreview?.isSettling = true
         } completion: {

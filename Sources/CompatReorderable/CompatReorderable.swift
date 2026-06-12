@@ -92,7 +92,47 @@ extension ForEach where Content: View, Data.Element: Identifiable, ID == Data.El
     }
 }
 
+/// The animations a reorder container uses, overridable via
+/// ``SwiftUICore/View/compatReorderAnimations(_:)``. Defaults are tuned per
+/// platform: the system-drag backend (iOS/visionOS) animates its own lift,
+/// glide, and settle, so only `gapReflow` and `dropReveal` apply there;
+/// `lift` and `settle` drive the self-rendered fallback backend
+/// (watchOS/macOS), which defaults to slightly slower, calmer curves.
+public struct CompatReorderAnimations: Sendable {
+    /// Cells reflowing around the gap as the drag retargets.
+    public var gapReflow: Animation
+
+    /// The committed cell fading in under the system drop glide
+    /// (iOS/visionOS only). Delayed by default so the in-flight copy fades
+    /// out first — a handoff, not two items at once.
+    public var dropReveal: Animation
+
+    /// The cell lifting at drag start (watchOS/macOS backend only).
+    public var lift: Animation
+
+    /// The dragged item gliding into its slot on release (watchOS/macOS
+    /// backend only).
+    public var settle: Animation
+
+    public init() {
+        #if os(watchOS) || os(macOS)
+        gapReflow = .spring(response: 0.5, dampingFraction: 0.8)
+        #else
+        gapReflow = .spring(response: 0.35, dampingFraction: 0.8)
+        #endif
+        dropReveal = .easeIn(duration: 0.18).delay(0.12)
+        lift = .snappy(duration: 0.3)
+        settle = .spring(response: 0.5, dampingFraction: 0.85)
+    }
+}
+
 extension View {
+    /// Overrides the animations used by compat reorder containers in this
+    /// hierarchy. See ``CompatReorderAnimations`` for what each one drives.
+    public func compatReorderAnimations(_ animations: CompatReorderAnimations) -> some View {
+        environment(\.compatReorderAnimations, animations)
+    }
+
     /// The compat counterpart of the native
     /// `reorderContainer(for:isEnabled:move:)` (iOS 27, macOS 27,
     /// watchOS 27, visionOS 27). Apply to the container that holds a
@@ -226,6 +266,7 @@ struct CompatReorderContainerModifier<Item: Identifiable>: ViewModifier {
     let isEnabled: Bool
     let move: (CompatReorderDifference<Item.ID>) -> Void
 
+    @Environment(\.compatReorderAnimations) private var animations
     @State private var coordinator = CompatReorderCoordinator<Item.ID>()
 
     func body(content: Content) -> some View {
@@ -233,6 +274,7 @@ struct CompatReorderContainerModifier<Item: Identifiable>: ViewModifier {
         // `move` captured once in onAppear would commit against whatever its
         // captures held at first appearance.
         coordinator.isReorderEnabled = isEnabled
+        coordinator.animations = animations
         coordinator.commitMove = { [move] sources, before in
             move(
                 CompatReorderDifference(

@@ -34,6 +34,7 @@ final class CompatReorderDragToken {
 /// call per movement — never with per-item boxing on hot paths.
 protocol CompatReorderDragDriving: AnyObject {
     var hasActiveDrag: Bool { get }
+    var animations: CompatReorderAnimations { get }
     func dragToken(at point: CGPoint) -> CompatReorderDragToken?
     func owns(_ token: CompatReorderDragToken) -> Bool
     func liftFrame(for token: CompatReorderDragToken) -> CGRect?
@@ -91,10 +92,7 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
     @ObservationIgnored var frames: [ItemID: CGRect] = [:]
     @ObservationIgnored var commitMove: ((_ sources: [ItemID], _ before: ItemID?) -> Void)?
     @ObservationIgnored var isReorderEnabled = true
-
-    /// Animation for gap reflows; the fallback backend slows it down (its
-    /// whole drag is self-rendered, unlike the system-paced iOS backend).
-    @ObservationIgnored var gapAnimation: Animation = .spring(response: 0.35, dampingFraction: 0.8)
+    @ObservationIgnored var animations = CompatReorderAnimations()
 
     @ObservationIgnored private var lastMoveTime = Date.distantPast
 
@@ -139,7 +137,7 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
     /// system's cancel animation returns the preview to the original slot.
     func revertDrag() {
         guard draggedID != nil else { return }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+        withAnimation(animations.gapReflow) {
             displayIDs = sourceIDs
         }
     }
@@ -217,7 +215,7 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
     }
 
     private func proposeOrder(_ order: [ItemID]) {
-        withAnimation(gapAnimation) {
+        withAnimation(animations.gapReflow) {
             displayIDs = order
         }
         moveCount += 1
@@ -267,4 +265,5 @@ extension CompatReorderCoordinator: CompatReorderDragDriving {
 
 extension EnvironmentValues {
     @Entry var compatReorderCoordinator: (any CompatReorderCoordinating)?
+    @Entry var compatReorderAnimations = CompatReorderAnimations()
 }

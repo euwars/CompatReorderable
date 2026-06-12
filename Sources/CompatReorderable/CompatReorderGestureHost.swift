@@ -59,9 +59,10 @@ struct CompatReorderGestureHost: UIViewRepresentable {
         private var lastReportedPoint: CGPoint?
         private var dropHandled = false
         private var sessionGeneration = 0
-        // Retained while the system displays their views as drag previews.
-        private var liftPreviewHost: UIHostingController<AnyView>?
-        private var dropPreviewHost: UIHostingController<AnyView>?
+        /// Transparent canvas around the lift preview so its SwiftUI hover
+        /// shadow isn't clipped. The drop target must use the same canvas
+        /// size or the morph visibly scales the card during the fade.
+        private static let previewShadowMargin: CGFloat = 40
 
         /// Snapshots are drawn from and drop targets anchor to this view:
         /// the scroll view when there is one, else the interaction host.
@@ -113,8 +114,6 @@ struct CompatReorderGestureHost: UIViewRepresentable {
 
         func detach() {
             stopDisplayLink()
-            liftPreviewHost = nil
-            dropPreviewHost = nil
             if let dragInteraction {
                 interactionHostView?.removeInteraction(dragInteraction)
             }
@@ -181,12 +180,11 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             else { return nil }
             let frameInContainer = convert(frame, to: container)
 
-            if let (host, preview) = livePreview(
+            if let preview = renderedPreview(
                 for: token,
                 frameInContainer: frameInContainer,
                 container: container
             ) {
-                liftPreviewHost = host
                 return preview
             }
             return snapshotPreview(for: item)
@@ -269,9 +267,13 @@ struct CompatReorderGestureHost: UIViewRepresentable {
         func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
             dropHandled = true
             reorderCoordinator?.commitDrop()
-            // Reveal the live cell immediately so committed content is
-            // visible the moment the finger lifts.
-            reorderCoordinator?.revealDraggedCell()
+            // Reveal the live cell as a delayed fade-in: the in-flight copy
+            // needs the glide to fade out, so the committed cell only ramps
+            // up in the second half — a handoff, never two items visible at
+            // full strength.
+            withAnimation(reorderCoordinator?.animations.dropReveal ?? CompatReorderAnimations().dropReveal) {
+                reorderCoordinator?.revealDraggedCell()
+            }
         }
 
         func dropInteraction(
@@ -290,45 +292,73 @@ struct CompatReorderGestureHost: UIViewRepresentable {
                 center: CGPoint(x: frameInContainer.midX, y: frameInContainer.midY)
             )
 
-            // The glide must carry the COMMITTED appearance (index badges,
-            // timestamps changed by the move). Snapshots can't do that —
-            // they race SwiftUI's render scheduler and come out stale — so
-            // the preview is a live SwiftUI copy of the cell instead.
-            if let (host, preview) = livePreview(
-                for: token,
-                frameInContainer: frameInContainer,
-                container: container
-            ) {
-                dropPreviewHost = host
-                return preview
-            }
+            // The live cell is already revealed at the slot (with committed
+            // content), so the drop preview's only job is to get out of the
+            // way gracefully. A transparent view targeted at the slot makes
+            // the system's own morph crossfade the in-flight preview to
+            // nothing WHILE gliding — no opaque copy ever "sits" on the cell
+            // and pops off at the end. (Animating our preview views' alpha
+            // doesn't work: the system displays its own copies.) Sized like
+            // the lift canvas (cell + shadow margin) so the morph doesn't
+            // scale the card while fading.
+            let margin = Self.previewShadowMargin
+            let clearView = UIView(
+                frame: CGRect(
+                    x: 0,
+                    y: 0,
+                    width: frameInContainer.width + margin * 2,
+                    height: frameInContainer.height + margin * 2
+                )
+            )
+            clearView.backgroundColor = .clear
 
-            return defaultPreview.retargetedPreview(with: target)
+            let parameters = UIDragPreviewParameters()
+            parameters.backgroundColor = .clear
+            parameters.shadowPath = UIBezierPath()
+
+            return UITargetedDragPreview(view: clearView, parameters: parameters, target: target)
         }
 
-        /// A live SwiftUI copy of the cell: pixel-faithful at lift, and it
-        /// keeps rendering committed changes through the glide — snapshots
-        /// can do neither reliably. No visiblePath or system shadow plate:
-        /// the content draws its own shape, so corners and shadows always
-        /// match the cell, whatever its design.
-        private func livePreview(
+        /// The cell's SwiftUI content rendered synchronously to an image via
+        /// ImageRenderer — no window dependence, so it works on the
+        /// menu-linked drag path too (UIKit snapshots that preview before
+        /// any window exists; hosted views come out empty there). No
+        /// visiblePath or system shadow plate (those are rectangular and
+        /// mismatch rounded cells); the hover elevation is a SwiftUI shadow
+        /// hugging the cell's actual rendered shape, with transparent
+        /// padding so it isn't clipped at the canvas bounds.
+        private func renderedPreview(
             for token: CompatReorderDragToken,
             frameInContainer: CGRect,
             container: UIView
-        ) -> (UIHostingController<AnyView>, UITargetedDragPreview)? {
+        ) -> UITargetedDragPreview? {
             guard let content = reorderCoordinator?.previewContent(for: token) else { return nil }
 
-            let host = UIHostingController(
-                rootView: AnyView(
-                    content.frame(
+            let shadowMargin = Self.previewShadowMargin
+            let canvasSize = CGSize(
+                width: frameInContainer.width + shadowMargin * 2,
+                height: frameInContainer.height + shadowMargin * 2
+            )
+
+            let renderer = ImageRenderer(
+                content: content
+                    .frame(
                         width: frameInContainer.width,
                         height: frameInContainer.height
                     )
-                )
+                    .shadow(color: .black.opacity(0.22), radius: 14, y: 8)
+                    .padding(shadowMargin)
+                    .environment(
+                        \.colorScheme,
+                        traitCollection.userInterfaceStyle == .dark ? .dark : .light
+                    )
             )
-            host.view.backgroundColor = .clear
-            host.safeAreaRegions = []
-            host.view.frame = CGRect(origin: .zero, size: frameInContainer.size)
+            renderer.proposedSize = ProposedViewSize(canvasSize)
+            renderer.scale = window?.screen.scale ?? 3
+            guard let image = renderer.uiImage else { return nil }
+
+            let imageView = UIImageView(image: image)
+            imageView.frame = CGRect(origin: .zero, size: canvasSize)
 
             let parameters = UIDragPreviewParameters()
             parameters.backgroundColor = .clear
@@ -338,7 +368,7 @@ struct CompatReorderGestureHost: UIViewRepresentable {
                 container: container,
                 center: CGPoint(x: frameInContainer.midX, y: frameInContainer.midY)
             )
-            return (host, UITargetedDragPreview(view: host.view, parameters: parameters, target: target))
+            return UITargetedDragPreview(view: imageView, parameters: parameters, target: target)
         }
 
         func dropInteraction(
@@ -348,13 +378,11 @@ struct CompatReorderGestureHost: UIViewRepresentable {
         ) {
             animator.addCompletion { [weak self] _ in
                 self?.reorderCoordinator?.finishDrag()
-                self?.dropPreviewHost = nil
             }
         }
 
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnd session: UIDropSession) {
             activeDropSession = nil
-            liftPreviewHost = nil
             stopDisplayLink()
         }
 
