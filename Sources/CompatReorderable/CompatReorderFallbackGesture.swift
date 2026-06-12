@@ -31,6 +31,17 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
             // The overlay preview represents the dragged item; its hidden
             // cell is the gap.
             .opacity(isDragged ? 0 : 1)
+            // SwiftUI CANCELS (not ends) the gesture when its view leaves
+            // the hierarchy — a lazy container deinstantiating the cell
+            // after a crown/wheel scroll, or the app removing the item
+            // mid-drag. onEnded never fires then; without this, the drag
+            // state stays stranded (frozen preview, all future drags
+            // blocked).
+            .onDisappear {
+                guard let coordinator, coordinator.draggedID == itemID else { return }
+                coordinator.revertDrag()
+                coordinator.finishDrag()
+            }
 
         #if os(watchOS)
         base.simultaneousGesture(watchReorderGesture)
@@ -42,7 +53,7 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
     private func lift() {
         guard let coordinator,
               coordinator.isReorderEnabled,
-              let content = coordinator.fallbackPreviewContent?(itemID)
+              let content = coordinator.previewContentProvider?(itemID)
         else { return }
         liftFrame = coordinator.frames[itemID] ?? .zero
         coordinator.gapAnimation = .spring(response: 0.5, dampingFraction: 0.8)
@@ -70,8 +81,7 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
             coordinator.fallbackPreview?.frame = slotFrame
             coordinator.fallbackPreview?.isSettling = true
         } completion: {
-            coordinator.finishDrag()
-            coordinator.fallbackPreview = nil
+            coordinator.finishDrag()  // Also clears fallbackPreview.
         }
     }
 

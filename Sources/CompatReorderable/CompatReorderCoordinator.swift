@@ -16,16 +16,32 @@ enum CompatReorder {
 /// `CompatReorderableForEach` downcasts to its concrete ID type.
 protocol CompatReorderCoordinating: AnyObject {}
 
+/// Identifies a drag item across the non-generic UIKit boundary, tagged with
+/// its owning coordinator so foreign sessions (another container's drag,
+/// another library's drop target) are never confused with ours.
+final class CompatReorderDragToken {
+    let ownerID: ObjectIdentifier
+    let itemID: AnyHashable
+
+    init(ownerID: ObjectIdentifier, itemID: AnyHashable) {
+        self.ownerID = ownerID
+        self.itemID = itemID
+    }
+}
+
 /// The non-generic face the UIKit gesture host drives. Only crossed a
 /// handful of times per drag (lift, begin, drop preview) plus one CGPoint
 /// call per movement — never with per-item boxing on hot paths.
 protocol CompatReorderDragDriving: AnyObject {
     var hasActiveDrag: Bool { get }
-    func dragToken(at point: CGPoint) -> AnyHashable?
-    func liftFrame(for token: AnyHashable) -> CGRect?
-    func beginDrag(token: AnyHashable)
+    func dragToken(at point: CGPoint) -> CompatReorderDragToken?
+    func owns(_ token: CompatReorderDragToken) -> Bool
+    func liftFrame(for token: CompatReorderDragToken) -> CGRect?
+    func previewContent(for token: CompatReorderDragToken) -> AnyView?
+    func beginDrag(token: CompatReorderDragToken)
     func dragMoved(at point: CGPoint)
     func commitDrop()
+    func revealDraggedCell()
     func revertDrag()
     func finishDrag()
 }
@@ -67,7 +83,7 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
         var isSettling = false
     }
 
-    @ObservationIgnored var fallbackPreviewContent: ((ItemID) -> AnyView?)?
+    @ObservationIgnored var previewContentProvider: ((ItemID) -> AnyView?)?
 
     // MARK: Unobserved bookkeeping
 
@@ -105,7 +121,14 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
               let fromIndex = displayIDs.firstIndex(of: draggedID)
         else { return }
 
-        let successorIndex = displayIDs.index(after: fromIndex)
+        // The successor may have been deleted from the data mid-drag; walk
+        // forward to the first surviving one so the item still lands at its
+        // visual slot instead of falling to the end.
+        let surviving = Set(sourceIDs)
+        var successorIndex = displayIDs.index(after: fromIndex)
+        while successorIndex < displayIDs.endIndex, !surviving.contains(displayIDs[successorIndex]) {
+            successorIndex = displayIDs.index(after: successorIndex)
+        }
         commitMove?(
             [draggedID],
             successorIndex < displayIDs.endIndex ? displayIDs[successorIndex] : nil
@@ -121,12 +144,22 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
         }
     }
 
+    /// Unhides the dragged item's cell at drop time, before the system drop
+    /// animation finishes. The drag preview is a snapshot taken at lift, so
+    /// committed content (an index badge, a timestamp) would otherwise look
+    /// stale until the glide ends; revealing early lets the fresh cell fade
+    /// in at the slot while the preview converges onto it.
+    func revealDraggedCell() {
+        draggedID = nil
+    }
+
     /// Called after the drop or cancel animation completes: unhides the cell
-    /// and clears the drag state.
+    /// (if not already revealed) and clears the drag state.
     func finishDrag() {
-        guard draggedID != nil else { return }
+        guard draggedID != nil || displayIDs != nil else { return }
         draggedID = nil
         displayIDs = nil
+        fallbackPreview = nil
     }
 
     // MARK: Retargeting
@@ -199,16 +232,28 @@ extension CompatReorderCoordinator: CompatReorderDragDriving {
         draggedID != nil
     }
 
-    func dragToken(at point: CGPoint) -> AnyHashable? {
-        itemID(at: point).map(AnyHashable.init)
+    func dragToken(at point: CGPoint) -> CompatReorderDragToken? {
+        itemID(at: point).map {
+            CompatReorderDragToken(ownerID: ObjectIdentifier(self), itemID: AnyHashable($0))
+        }
     }
 
-    func liftFrame(for token: AnyHashable) -> CGRect? {
-        (token.base as? ItemID).flatMap { frames[$0] }
+    func owns(_ token: CompatReorderDragToken) -> Bool {
+        token.ownerID == ObjectIdentifier(self)
     }
 
-    func beginDrag(token: AnyHashable) {
-        guard let id = token.base as? ItemID else { return }
+    func liftFrame(for token: CompatReorderDragToken) -> CGRect? {
+        guard owns(token), let id = token.itemID.base as? ItemID else { return nil }
+        return frames[id]
+    }
+
+    func previewContent(for token: CompatReorderDragToken) -> AnyView? {
+        guard owns(token), let id = token.itemID.base as? ItemID else { return nil }
+        return previewContentProvider?(id)
+    }
+
+    func beginDrag(token: CompatReorderDragToken) {
+        guard owns(token), let id = token.itemID.base as? ItemID else { return }
         beginDrag(id: id)
     }
 

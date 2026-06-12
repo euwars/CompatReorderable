@@ -11,8 +11,9 @@
 //  reorder. A `UIDropInteraction` on the same view feeds the session
 //  location to the coordinator, which moves the gap and commits on drop.
 //
-//  iOS/iPadOS/Catalyst/visionOS only — watchOS has no drag interactions and
-//  uses the SwiftUI gesture backend in CompatReorderWatchGesture.swift.
+//  iOS/iPadOS/Catalyst/visionOS only — watchOS and macOS have no drag
+//  interactions and use the SwiftUI gesture backend in
+//  CompatReorderFallbackGesture.swift.
 //
 
 #if os(iOS) || os(visionOS)
@@ -56,36 +57,49 @@ struct CompatReorderGestureHost: UIViewRepresentable {
         private var displayLink: CADisplayLink?
         private var lastTickTimestamp: CFTimeInterval = 0
         private var lastReportedPoint: CGPoint?
+        private var dropHandled = false
+        private var sessionGeneration = 0
+        // Retained while the system displays their views as drag previews.
+        private var liftPreviewHost: UIHostingController<AnyView>?
+        private var dropPreviewHost: UIHostingController<AnyView>?
+
+        /// Snapshots are drawn from and drop targets anchor to this view:
+        /// the scroll view when there is one, else the interaction host.
+        private var previewContainer: UIView? { scrollView ?? interactionHostView }
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
             guard window != nil, dragInteraction == nil else { return }
 
+            // The enclosing scroll view powers auto-scroll, but is optional:
+            // plain, non-scrolling containers reorder fine without one.
             var ancestor = superview
             while ancestor != nil, !(ancestor is UIScrollView) {
                 ancestor = ancestor?.superview
             }
-            guard let scrollView = ancestor as? UIScrollView else { return }
-            self.scrollView = scrollView
+            scrollView = ancestor as? UIScrollView
 
             // Install on the view that carries SwiftUI's context-menu
             // interaction (the hosting view above the scroll view): UIKit
             // only links menu and drag when both interactions share a view.
-            // Fall back to the hosting view by class, then the scroll view.
+            // Fall back to the hosting view by class, then the scroll view,
+            // then the topmost ancestor.
             var menuHost: UIView?
             var hostingFallback: UIView?
-            var candidate = scrollView.superview
+            var topmost: UIView = self
+            var candidate = (scrollView ?? self).superview
             while let view = candidate {
-                if view.interactions.contains(where: { $0 is UIContextMenuInteraction }) {
+                if menuHost == nil,
+                   view.interactions.contains(where: { $0 is UIContextMenuInteraction }) {
                     menuHost = view
-                    break
                 }
                 if hostingFallback == nil, String(describing: type(of: view)).contains("HostingView") {
                     hostingFallback = view
                 }
+                topmost = view
                 candidate = view.superview
             }
-            let target = menuHost ?? hostingFallback ?? scrollView
+            let target = menuHost ?? hostingFallback ?? scrollView ?? topmost
 
             let drag = UIDragInteraction(delegate: self)
             drag.isEnabled = isReorderEnabled
@@ -99,6 +113,8 @@ struct CompatReorderGestureHost: UIViewRepresentable {
 
         func detach() {
             stopDisplayLink()
+            liftPreviewHost = nil
+            dropPreviewHost = nil
             if let dragInteraction {
                 interactionHostView?.removeInteraction(dragInteraction)
             }
@@ -107,6 +123,10 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             }
             dragInteraction = nil
             dropInteraction = nil
+        }
+
+        private func reorderToken(of item: UIDragItem) -> CompatReorderDragToken? {
+            item.localObject as? CompatReorderDragToken
         }
 
         // MARK: - UIDragInteractionDelegate
@@ -120,9 +140,10 @@ struct CompatReorderGestureHost: UIViewRepresentable {
                   let token = reorderCoordinator.dragToken(at: session.location(in: self))
             else { return [] }
 
-            // An empty provider with a local object — the reorder never
+            // An empty provider with a local token — the reorder never
             // leaves the app, mirroring the native implementation's empty
-            // transfer representation.
+            // transfer representation. The token is tagged with its owning
+            // coordinator so foreign sessions are never confused with ours.
             let item = UIDragItem(itemProvider: NSItemProvider())
             item.localObject = token
             return [item]
@@ -154,11 +175,29 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             previewForLifting item: UIDragItem,
             session: UIDragSession
         ) -> UITargetedDragPreview? {
-            snapshotPreview(for: item)
+            guard let container = previewContainer,
+                  let token = reorderToken(of: item),
+                  let frame = reorderCoordinator?.liftFrame(for: token)
+            else { return nil }
+            let frameInContainer = convert(frame, to: container)
+
+            if let (host, preview) = livePreview(
+                for: token,
+                frameInContainer: frameInContainer,
+                container: container
+            ) {
+                liftPreviewHost = host
+                return preview
+            }
+            return snapshotPreview(for: item)
         }
 
         func dragInteraction(_ interaction: UIDragInteraction, sessionWillBegin session: UIDragSession) {
-            guard let token = session.items.first?.localObject as? AnyHashable else { return }
+            guard let token = session.items.first.flatMap(reorderToken(of:)),
+                  reorderCoordinator?.owns(token) == true
+            else { return }
+            sessionGeneration += 1
+            dropHandled = false
             reorderCoordinator?.beginDrag(token: token)
             startDisplayLink()
         }
@@ -169,6 +208,23 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             willEndWith operation: UIDropOperation
         ) {
             stopDisplayLink()
+
+            // Safety net: if a foreign drop target claims the session, no
+            // local performDrop or cancel animation will ever run and the
+            // drag state would be stranded (hidden cell, all future drags
+            // blocked). Give the legitimate paths time to win, then clean
+            // up; a newer session bumps the generation and voids this timer.
+            let generation = sessionGeneration
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                guard let self,
+                      generation == self.sessionGeneration,
+                      !self.dropHandled,
+                      let coordinator = self.reorderCoordinator,
+                      coordinator.hasActiveDrag
+                else { return }
+                coordinator.revertDrag()
+                coordinator.finishDrag()
+            }
         }
 
         func dragInteraction(
@@ -179,6 +235,7 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             // Cancelled (released outside a drop area): revert the gap so the
             // system's cancel animation returns the preview to the original
             // slot, then unhide the cell.
+            dropHandled = true
             reorderCoordinator?.revertDrag()
             animator.addCompletion { [weak self] _ in
                 self?.reorderCoordinator?.finishDrag()
@@ -188,7 +245,10 @@ struct CompatReorderGestureHost: UIViewRepresentable {
         // MARK: - UIDropInteractionDelegate
 
         func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
-            session.localDragSession?.items.first?.localObject is AnyHashable
+            guard let token = session.localDragSession?.items.first.flatMap(reorderToken(of:)) else {
+                return false
+            }
+            return reorderCoordinator?.owns(token) == true
         }
 
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnter session: UIDropSession) {
@@ -206,6 +266,139 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             return proposal
         }
 
+        func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
+            dropHandled = true
+            reorderCoordinator?.commitDrop()
+            // Reveal the live cell immediately so committed content is
+            // visible the moment the finger lifts.
+            reorderCoordinator?.revealDraggedCell()
+        }
+
+        func dropInteraction(
+            _ interaction: UIDropInteraction,
+            previewForDropping item: UIDragItem,
+            withDefault defaultPreview: UITargetedDragPreview
+        ) -> UITargetedDragPreview? {
+            guard let container = previewContainer,
+                  let token = reorderToken(of: item),
+                  let frame = reorderCoordinator?.liftFrame(for: token)
+            else { return defaultPreview }
+
+            let frameInContainer = convert(frame, to: container)
+            let target = UIDragPreviewTarget(
+                container: container,
+                center: CGPoint(x: frameInContainer.midX, y: frameInContainer.midY)
+            )
+
+            // The glide must carry the COMMITTED appearance (index badges,
+            // timestamps changed by the move). Snapshots can't do that —
+            // they race SwiftUI's render scheduler and come out stale — so
+            // the preview is a live SwiftUI copy of the cell instead.
+            if let (host, preview) = livePreview(
+                for: token,
+                frameInContainer: frameInContainer,
+                container: container
+            ) {
+                dropPreviewHost = host
+                return preview
+            }
+
+            return defaultPreview.retargetedPreview(with: target)
+        }
+
+        /// A live SwiftUI copy of the cell: pixel-faithful at lift, and it
+        /// keeps rendering committed changes through the glide — snapshots
+        /// can do neither reliably. No visiblePath or system shadow plate:
+        /// the content draws its own shape, so corners and shadows always
+        /// match the cell, whatever its design.
+        private func livePreview(
+            for token: CompatReorderDragToken,
+            frameInContainer: CGRect,
+            container: UIView
+        ) -> (UIHostingController<AnyView>, UITargetedDragPreview)? {
+            guard let content = reorderCoordinator?.previewContent(for: token) else { return nil }
+
+            let host = UIHostingController(
+                rootView: AnyView(
+                    content.frame(
+                        width: frameInContainer.width,
+                        height: frameInContainer.height
+                    )
+                )
+            )
+            host.view.backgroundColor = .clear
+            host.safeAreaRegions = []
+            host.view.frame = CGRect(origin: .zero, size: frameInContainer.size)
+
+            let parameters = UIDragPreviewParameters()
+            parameters.backgroundColor = .clear
+            parameters.shadowPath = UIBezierPath()
+
+            let target = UIDragPreviewTarget(
+                container: container,
+                center: CGPoint(x: frameInContainer.midX, y: frameInContainer.midY)
+            )
+            return (host, UITargetedDragPreview(view: host.view, parameters: parameters, target: target))
+        }
+
+        func dropInteraction(
+            _ interaction: UIDropInteraction,
+            item: UIDragItem,
+            willAnimateDropWith animator: UIDragAnimating
+        ) {
+            animator.addCompletion { [weak self] _ in
+                self?.reorderCoordinator?.finishDrag()
+                self?.dropPreviewHost = nil
+            }
+        }
+
+        func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnd session: UIDropSession) {
+            activeDropSession = nil
+            liftPreviewHost = nil
+            stopDisplayLink()
+        }
+
+        // MARK: - Snapshot previews
+
+        private func snapshotPreview(for item: UIDragItem) -> UITargetedDragPreview? {
+            guard let container = previewContainer,
+                  let token = reorderToken(of: item),
+                  let frame = reorderCoordinator?.liftFrame(for: token)
+            else { return nil }
+
+            let frameInContainer = convert(frame, to: container)
+            guard frameInContainer.width > 0, frameInContainer.height > 0 else { return nil }
+
+            // Render via drawHierarchy: resizableSnapshotView silently
+            // returns an empty (black) view for SwiftUI-hosted content.
+            let renderer = UIGraphicsImageRenderer(size: frameInContainer.size)
+            let image = renderer.image { _ in
+                // Shift the visible viewport so the cell region lands at the
+                // image origin.
+                let drawOrigin = CGPoint(
+                    x: container.bounds.minX - frameInContainer.minX,
+                    y: container.bounds.minY - frameInContainer.minY
+                )
+                container.drawHierarchy(
+                    in: CGRect(origin: drawOrigin, size: container.bounds.size),
+                    afterScreenUpdates: false
+                )
+            }
+
+            let imageView = UIImageView(image: image)
+            imageView.frame = CGRect(origin: .zero, size: frameInContainer.size)
+
+            let parameters = UIDragPreviewParameters()
+            parameters.backgroundColor = .clear
+            parameters.visiblePath = UIBezierPath(roundedRect: imageView.bounds, cornerRadius: 12)
+
+            let target = UIDragPreviewTarget(
+                container: container,
+                center: CGPoint(x: frameInContainer.midX, y: frameInContainer.midY)
+            )
+            return UITargetedDragPreview(view: imageView, parameters: parameters, target: target)
+        }
+
         /// Deduplicates location reports: with a stationary finger and no
         /// scrolling, the per-frame tick would otherwise run the retarget
         /// scans at up to 120Hz for nothing.
@@ -217,85 +410,6 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             }
             lastReportedPoint = point
             reorderCoordinator?.dragMoved(at: point)
-        }
-
-        func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
-            reorderCoordinator?.commitDrop()
-        }
-
-        func dropInteraction(
-            _ interaction: UIDropInteraction,
-            previewForDropping item: UIDragItem,
-            withDefault defaultPreview: UITargetedDragPreview
-        ) -> UITargetedDragPreview? {
-            // Land the preview exactly on the item's slot in the committed
-            // order — the settle animation.
-            guard let scrollView,
-                  let token = item.localObject as? AnyHashable,
-                  let frame = reorderCoordinator?.liftFrame(for: token)
-            else { return defaultPreview }
-            let frameInScroll = convert(frame, to: scrollView)
-            let target = UIDragPreviewTarget(
-                container: scrollView,
-                center: CGPoint(x: frameInScroll.midX, y: frameInScroll.midY)
-            )
-            return defaultPreview.retargetedPreview(with: target)
-        }
-
-        func dropInteraction(
-            _ interaction: UIDropInteraction,
-            item: UIDragItem,
-            willAnimateDropWith animator: UIDragAnimating
-        ) {
-            animator.addCompletion { [weak self] _ in
-                self?.reorderCoordinator?.finishDrag()
-            }
-        }
-
-        func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnd session: UIDropSession) {
-            activeDropSession = nil
-            stopDisplayLink()
-        }
-
-        // MARK: - Lift preview
-
-        private func snapshotPreview(for item: UIDragItem) -> UITargetedDragPreview? {
-            guard let scrollView,
-                  let token = item.localObject as? AnyHashable,
-                  let frame = reorderCoordinator?.liftFrame(for: token)
-            else { return nil }
-
-            let frameInScroll = convert(frame, to: scrollView)
-            guard frameInScroll.width > 0, frameInScroll.height > 0 else { return nil }
-
-            // Render via drawHierarchy: resizableSnapshotView silently
-            // returns an empty (black) view for SwiftUI-hosted content.
-            let renderer = UIGraphicsImageRenderer(size: frameInScroll.size)
-            let image = renderer.image { _ in
-                // Shift the visible viewport so the cell region lands at the
-                // image origin.
-                let drawOrigin = CGPoint(
-                    x: scrollView.bounds.minX - frameInScroll.minX,
-                    y: scrollView.bounds.minY - frameInScroll.minY
-                )
-                scrollView.drawHierarchy(
-                    in: CGRect(origin: drawOrigin, size: scrollView.bounds.size),
-                    afterScreenUpdates: false
-                )
-            }
-
-            let imageView = UIImageView(image: image)
-            imageView.frame = CGRect(origin: .zero, size: frameInScroll.size)
-
-            let parameters = UIDragPreviewParameters()
-            parameters.backgroundColor = .clear
-            parameters.visiblePath = UIBezierPath(roundedRect: imageView.bounds, cornerRadius: 12)
-
-            let target = UIDragPreviewTarget(
-                container: scrollView,
-                center: CGPoint(x: frameInScroll.midX, y: frameInScroll.midY)
-            )
-            return UITargetedDragPreview(view: imageView, parameters: parameters, target: target)
         }
 
         // MARK: - Auto-scroll

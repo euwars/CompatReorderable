@@ -6,10 +6,9 @@ let package = Package(
     name: "CompatReorderable",
     platforms: [
         // iOS/iPadOS/Catalyst/visionOS use the system drag-and-drop backend;
-        // watchOS uses a SwiftUI gesture backend (it has no drag
-        // interactions, matching the native API's reduced scope there). The
-        // macOS entry exists so the logic compiles and tests run on a Mac
-        // host; the API is inert there.
+        // watchOS and macOS use a SwiftUI gesture backend (they have no drag
+        // interactions — for watchOS that matches the native API's reduced
+        // scope there).
         .iOS(.v17),
         .visionOS(.v1),
         .watchOS(.v10),

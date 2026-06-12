@@ -52,7 +52,7 @@ The 2027 OS releases finally bring drag-to-reorder to every container — but on
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/<you>/CompatReorderable.git", from: "1.0.0")
+    .package(url: "https://github.com/euwars/CompatReorderable.git", from: "1.0.0")
 ]
 ```
 
@@ -119,7 +119,8 @@ These platforms have no drag-and-drop interactions to build on (the native watch
 - Vertical containers only (vertical auto-scroll; the retarget heuristics assume column-ish layouts).
 - Single collection per container — the native `collectionID:`/sections overloads have no compat counterpart.
 - Items cannot be dragged out to other apps; reorder sessions are app-restricted by design.
-- The drag preview is a snapshot taken at lift; cells that animate their content will show a static image while dragged.
+- The drag preview is a snapshot taken at lift; cells that animate their content will show a static image while dragged. (The drop animation re-snapshots, so content committed by the move — index badges, timestamps — appears immediately on release.)
+- One reorder container per scroll view: two compat containers sharing the same scroll view is unsupported (their interactions would land on the same hosting view).
 
 ## How it works
 

@@ -51,6 +51,8 @@ extension CompatReorderDifference {
     ///         difference.apply(to: &items)
     ///     }
     public func apply<Item>(to items: inout [Item]) where Item: Identifiable, Item.ID == ItemID {
+        // Moving an item "before itself" is a no-op, not a move-to-end.
+        if let beforeID, sources.contains(beforeID) { return }
         CompatReorderEngine.move(items: &items, sourceIDs: sources, before: beforeID)
     }
 
@@ -96,7 +98,8 @@ extension View {
     /// watchOS 27, visionOS 27). Apply to the container that holds a
     /// ``SwiftUICore/ForEach/compatReorderable()``.
     ///
-    /// Behavior, mirroring the native implementation:
+    /// Behavior on iOS/iPadOS/Catalyst/visionOS, mirroring the native
+    /// implementation:
     /// - Built on the system drag-and-drop interactions, so lift, drag,
     ///   cancel, and drop animations are the system's own, a second finger
     ///   can scroll during a drag, and reorders never leave the app.
@@ -106,6 +109,11 @@ extension View {
     ///   presents the menu; dragging — including out of a presented menu —
     ///   dismisses it and starts the reorder.
     /// - Dragging near the scroll view's top/bottom edge auto-scrolls.
+    ///
+    /// On watchOS and macOS a SwiftUI gesture backend drives the same model
+    /// with self-rendered previews — no system lift, menu integration, or
+    /// edge auto-scroll there. One reorder container per scroll view; two
+    /// containers sharing one scroll view is unsupported.
     ///
     /// - Parameters:
     ///   - item: The element type of the reorderable collection.
@@ -184,17 +192,33 @@ struct CompatReorderableForEach<Data: RandomAccessCollection, Content: View>: Vi
         let ids = data.map(\.id)
         if coordinator.sourceIDs != ids {
             coordinator.sourceIDs = ids
+            // Prune frames of deleted items: ghost frames would otherwise
+            // cover regions the survivors reflowed into, intermittently
+            // hijacking retargets and lifting nonexistent items.
+            let valid = Set(ids)
+            if coordinator.frames.count != valid.count {
+                coordinator.frames = coordinator.frames.filter { valid.contains($0.key) }
+            }
         }
 
-        #if os(watchOS) || os(macOS)
-        coordinator.fallbackPreviewContent = { id in
+        // Used by the fallback backends for the dragged overlay, and by the
+        // iOS drop animation as a live (never stale) copy of the cell.
+        coordinator.previewContentProvider = { id in
             data.first { $0.id == id }.map { AnyView(content($0)) }
         }
-        #endif
 
         guard let order = coordinator.displayIDs else { return Array(data) }
-        let lookup = Dictionary(uniqueKeysWithValues: data.map { ($0.id, $0) })
-        return order.compactMap { lookup[$0] }
+        // uniquingKeysWith: duplicate IDs are a caller bug, but degrade to a
+        // ForEach warning instead of trapping mid-drag.
+        let lookup = Dictionary(data.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var display = order.compactMap { lookup[$0] }
+        // Items inserted mid-drag aren't in the pinned order; show them at
+        // the end rather than blinking them out for the drag's duration.
+        if display.count != data.count {
+            let pinned = Set(order)
+            display.append(contentsOf: data.filter { !pinned.contains($0.id) })
+        }
+        return display
     }
 }
 
@@ -205,7 +229,20 @@ struct CompatReorderContainerModifier<Item: Identifiable>: ViewModifier {
     @State private var coordinator = CompatReorderCoordinator<Item.ID>()
 
     func body(content: Content) -> some View {
-        content
+        // Refreshed every render (unobserved, so non-invalidating): a stale
+        // `move` captured once in onAppear would commit against whatever its
+        // captures held at first appearance.
+        coordinator.isReorderEnabled = isEnabled
+        coordinator.commitMove = { [move] sources, before in
+            move(
+                CompatReorderDifference(
+                    sources: sources,
+                    destination: .init(position: before.map { .before($0) } ?? .end)
+                )
+            )
+        }
+
+        return content
             .environment(\.compatReorderCoordinator, coordinator)
             .coordinateSpace(name: CompatReorder.coordinateSpaceName)
         #if os(iOS) || os(visionOS)
@@ -224,20 +261,6 @@ struct CompatReorderContainerModifier<Item: Identifiable>: ViewModifier {
                 lifted != nil ? .impact(weight: .medium) : .impact(weight: .light)
             }
         #endif
-            .onAppear {
-                coordinator.isReorderEnabled = isEnabled
-                coordinator.commitMove = { sources, before in
-                    move(
-                        CompatReorderDifference(
-                            sources: sources,
-                            destination: .init(position: before.map { .before($0) } ?? .end)
-                        )
-                    )
-                }
-            }
-            .onChange(of: isEnabled) { _, enabled in
-                coordinator.isReorderEnabled = enabled
-            }
     }
 }
 

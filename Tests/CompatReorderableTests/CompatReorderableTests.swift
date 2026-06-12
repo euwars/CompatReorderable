@@ -92,6 +92,16 @@ struct DifferenceApplyTests {
         difference.apply(to: &list)
         #expect(ids(list) == ["a", "b", "c"])
     }
+
+    @Test func selfDestinationIsANoOp() {
+        var list = items("a", "b", "c")
+        let difference = CompatReorderDifference(
+            sources: ["a"],
+            destination: .init(position: .before("a"))
+        )
+        difference.apply(to: &list)
+        #expect(ids(list) == ["a", "b", "c"])
+    }
 }
 
 // MARK: - Coordinator drag lifecycle and retargeting
@@ -223,6 +233,22 @@ struct CoordinatorTests {
         #expect(reportCount == 0)
     }
 
+    @Test func commitSkipsSuccessorsDeletedMidDrag() {
+        let coordinator = makeSingleColumnCoordinator()
+        var reported: (sources: [String], before: String?)?
+        coordinator.commitMove = { reported = ($0, $1) }
+
+        coordinator.beginDrag(id: "a")
+        coordinator.dragMoved(at: CGPoint(x: 50, y: 130))  // -> [b, a, c, d]
+        // The app deletes "c" mid-drag: the committed successor must walk
+        // forward to "d" instead of falling to the end.
+        coordinator.sourceIDs = ["a", "b", "d"]
+        coordinator.commitDrop()
+
+        #expect(reported?.sources == ["a"])
+        #expect(reported?.before == "d")
+    }
+
     @Test func revertRestoresSourceOrderAndFinishClearsState() {
         let coordinator = makeSingleColumnCoordinator()
         coordinator.beginDrag(id: "a")
@@ -252,7 +278,8 @@ struct DragDrivingBoundaryTests {
         let driving: any CompatReorderDragDriving = coordinator
 
         let token = driving.dragToken(at: CGPoint(x: 50, y: 150))
-        #expect(token == AnyHashable("b"))
+        #expect(token?.itemID == AnyHashable("b"))
+        #expect(driving.owns(token!))
 
         #expect(driving.liftFrame(for: token!) == CGRect(x: 0, y: 100, width: 100, height: 100))
 
@@ -263,10 +290,17 @@ struct DragDrivingBoundaryTests {
 
     @Test func foreignTokenIsIgnored() {
         let coordinator = makeSingleColumnCoordinator()
+        let other = makeSingleColumnCoordinator()
         let driving: any CompatReorderDragDriving = coordinator
 
-        driving.beginDrag(token: AnyHashable(42))
+        // A token minted by a DIFFERENT container's coordinator — even with
+        // an itemID that exists here — must be rejected outright.
+        let foreign = other.dragToken(at: CGPoint(x: 50, y: 150))!
+        #expect(!driving.owns(foreign))
+        #expect(driving.liftFrame(for: foreign) == nil)
+
+        driving.beginDrag(token: foreign)
         #expect(coordinator.draggedID == nil)
-        #expect(driving.liftFrame(for: AnyHashable(42)) == nil)
+        #expect(!driving.hasActiveDrag)
     }
 }
