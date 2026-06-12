@@ -53,11 +53,32 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
     private(set) var displayIDs: [ItemID]?
     private(set) var moveCount = 0
 
+    // MARK: Fallback-backend preview (watchOS/macOS)
+
+    /// Observed only by the fallback preview host, which renders the dragged
+    /// item in a container-level overlay — always above every cell. (zIndex
+    /// on cells is unreliable in lazy containers, which composite each lane
+    /// separately.) Frame is in container coordinates.
+    var fallbackPreview: FallbackPreview?
+
+    struct FallbackPreview {
+        var content: AnyView
+        var frame: CGRect
+        var isSettling = false
+    }
+
+    @ObservationIgnored var fallbackPreviewContent: ((ItemID) -> AnyView?)?
+
     // MARK: Unobserved bookkeeping
 
     @ObservationIgnored var sourceIDs: [ItemID] = []
     @ObservationIgnored var frames: [ItemID: CGRect] = [:]
     @ObservationIgnored var commitMove: ((_ sources: [ItemID], _ before: ItemID?) -> Void)?
+    @ObservationIgnored var isReorderEnabled = true
+
+    /// Animation for gap reflows; the fallback backend slows it down (its
+    /// whole drag is self-rendered, unlike the system-paced iOS backend).
+    @ObservationIgnored var gapAnimation: Animation = .spring(response: 0.35, dampingFraction: 0.8)
 
     @ObservationIgnored private var lastMoveTime = Date.distantPast
 
@@ -163,7 +184,7 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
     }
 
     private func proposeOrder(_ order: [ItemID]) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+        withAnimation(gapAnimation) {
             displayIDs = order
         }
         moveCount += 1

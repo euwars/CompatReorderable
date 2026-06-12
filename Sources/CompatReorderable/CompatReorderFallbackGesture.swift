@@ -4,10 +4,10 @@
 //
 //  SwiftUI gesture backend for platforms without drag-and-drop interactions:
 //  watchOS (the native watchOS 27 `reorderable()` also reorders without
-//  them) and macOS before 27. The drag is a gesture on each cell, and the
-//  dragged cell itself becomes the floating preview: it stays in the layout,
-//  offset to follow the pointer/finger and compensated against its own slot
-//  as the gap moves beneath it.
+//  them) and macOS before 27. The drag is a gesture on each cell; the
+//  dragged item renders as a container-level overlay so it always draws
+//  above every cell (zIndex on cells is unreliable in lazy containers),
+//  while its hidden cell is the gap.
 //
 //  Activation is platform-tuned: watchOS uses a long press first (touch
 //  scrolling must win until then); macOS starts straight from a small drag,
@@ -24,15 +24,13 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
     let itemID: ItemID
 
     @State private var liftFrame: CGRect = .zero
-    @State private var translation: CGSize = .zero
 
     func body(content: Content) -> some View {
         let isDragged = coordinator?.draggedID == itemID
         let base = content
-            .scaleEffect(isDragged ? 1.05 : 1)
-            .offset(isDragged ? dragOffset : .zero)
-            .shadow(color: .black.opacity(isDragged ? 0.3 : 0), radius: 8, y: 4)
-            .zIndex(isDragged ? 1 : 0)
+            // The overlay preview represents the dragged item; its hidden
+            // cell is the gap.
+            .opacity(isDragged ? 0 : 1)
 
         #if os(watchOS)
         base.simultaneousGesture(watchReorderGesture)
@@ -41,37 +39,39 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
         #endif
     }
 
-    /// The cell follows the pointer relative to where it was lifted; when a
-    /// retarget moves its slot in the layout, the slot delta is compensated
-    /// so the cell stays glued to the pointer.
-    private var dragOffset: CGSize {
-        guard let currentFrame = coordinator?.frames[itemID] else { return translation }
-        return CGSize(
-            width: liftFrame.minX + translation.width - currentFrame.minX,
-            height: liftFrame.minY + translation.height - currentFrame.minY
-        )
-    }
-
     private func lift() {
-        guard let coordinator else { return }
+        guard let coordinator,
+              coordinator.isReorderEnabled,
+              let content = coordinator.fallbackPreviewContent?(itemID)
+        else { return }
         liftFrame = coordinator.frames[itemID] ?? .zero
-        translation = .zero
-        withAnimation(.snappy(duration: 0.2)) {
+        coordinator.gapAnimation = .spring(response: 0.5, dampingFraction: 0.8)
+        withAnimation(.snappy(duration: 0.3)) {
             coordinator.beginDrag(id: itemID)
+            coordinator.fallbackPreview = .init(content: content, frame: liftFrame)
         }
     }
 
     private func follow(_ drag: DragGesture.Value) {
-        translation = drag.translation
+        coordinator?.fallbackPreview?.frame = liftFrame.offsetBy(
+            dx: drag.translation.width,
+            dy: drag.translation.height
+        )
         coordinator?.dragMoved(at: drag.location)
     }
 
     private func end() {
         guard let coordinator, coordinator.draggedID == itemID else { return }
         coordinator.commitDrop()
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+
+        // Settle: glide the preview into the item's slot, then unhide.
+        let slotFrame = coordinator.frames[itemID] ?? liftFrame
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+            coordinator.fallbackPreview?.frame = slotFrame
+            coordinator.fallbackPreview?.isSettling = true
+        } completion: {
             coordinator.finishDrag()
-            translation = .zero
+            coordinator.fallbackPreview = nil
         }
     }
 
@@ -89,9 +89,8 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
                 if coordinator.draggedID == nil {
                     lift()
                 }
-                if let drag {
-                    follow(drag)
-                }
+                guard coordinator.draggedID == itemID, let drag else { return }
+                follow(drag)
             }
             .onEnded { _ in end() }
     }
@@ -112,6 +111,28 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
         .onEnded { _ in end() }
     }
     #endif
+}
+
+/// Container-level overlay rendering the dragged item above all cells.
+/// Reads the per-frame preview state in its own body, so high-frequency
+/// updates invalidate only this small view, never the cell tree.
+struct CompatReorderFallbackPreviewHost<ItemID: Hashable>: View {
+    let coordinator: CompatReorderCoordinator<ItemID>
+
+    var body: some View {
+        if let preview = coordinator.fallbackPreview {
+            preview.content
+                .frame(width: preview.frame.width, height: preview.frame.height)
+                .scaleEffect(preview.isSettling ? 1 : 1.05)
+                .shadow(
+                    color: .black.opacity(preview.isSettling ? 0 : 0.3),
+                    radius: 8,
+                    y: 4
+                )
+                .offset(x: preview.frame.minX, y: preview.frame.minY)
+                .allowsHitTesting(false)
+        }
+    }
 }
 
 #endif

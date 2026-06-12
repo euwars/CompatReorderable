@@ -186,6 +186,12 @@ struct CompatReorderableForEach<Data: RandomAccessCollection, Content: View>: Vi
             coordinator.sourceIDs = ids
         }
 
+        #if os(watchOS) || os(macOS)
+        coordinator.fallbackPreviewContent = { id in
+            data.first { $0.id == id }.map { AnyView(content($0)) }
+        }
+        #endif
+
         guard let order = coordinator.displayIDs else { return Array(data) }
         let lookup = Dictionary(uniqueKeysWithValues: data.map { ($0.id, $0) })
         return order.compactMap { lookup[$0] }
@@ -207,6 +213,11 @@ struct CompatReorderContainerModifier<Item: Identifiable>: ViewModifier {
                 CompatReorderGestureHost(isEnabled: isEnabled, coordinator: coordinator)
             }
         #endif
+        #if os(watchOS) || os(macOS)
+            .overlay(alignment: .topLeading) {
+                CompatReorderFallbackPreviewHost(coordinator: coordinator)
+            }
+        #endif
         #if !os(macOS)
             .sensoryFeedback(.impact(weight: .light), trigger: coordinator.moveCount)
             .sensoryFeedback(trigger: coordinator.draggedID) { _, lifted in
@@ -214,6 +225,7 @@ struct CompatReorderContainerModifier<Item: Identifiable>: ViewModifier {
             }
         #endif
             .onAppear {
+                coordinator.isReorderEnabled = isEnabled
                 coordinator.commitMove = { sources, before in
                     move(
                         CompatReorderDifference(
@@ -222,6 +234,9 @@ struct CompatReorderContainerModifier<Item: Identifiable>: ViewModifier {
                         )
                     )
                 }
+            }
+            .onChange(of: isEnabled) { _, enabled in
+                coordinator.isReorderEnabled = enabled
             }
     }
 }
