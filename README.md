@@ -41,7 +41,7 @@ The 2027 OS releases finally bring drag-to-reorder to every container — but on
 | iOS / iPadOS / Mac Catalyst | 17.0+ (system drag backend) |
 | visionOS | 1.0+ (system drag backend, compiled but lightly tested) |
 | watchOS | 10.0+ (SwiftUI gesture backend, see below) |
-| macOS | compiles, API is inert (use the native API on macOS 27+) |
+| macOS | 14.0+ (SwiftUI gesture backend, see below) |
 | Xcode | 16+ |
 
 ## Installation
@@ -104,9 +104,9 @@ if #available(iOS 27.0, *) {
 }
 ```
 
-## watchOS
+## watchOS & macOS
 
-watchOS has no drag-and-drop interactions (the native watchOS 27 API also runs without them), so CompatReorderable uses a SwiftUI long-press + drag backend on watchOS: the cell itself becomes the floating preview. Differences from the iOS backend: no system lift animation, no context-menu integration, no edge auto-scroll, and touch-driven scrolling may conflict with the gesture on cells (crown scrolling is unaffected).
+These platforms have no drag-and-drop interactions to build on (the native watchOS 27 API also runs without them), so CompatReorderable uses a SwiftUI gesture backend: the cell itself becomes the floating preview. On watchOS the drag starts after a 0.4s long press (touch scrolling wins until then; crown scrolling is unaffected); on macOS it starts straight from a small click-drag, matching AppKit's reorder feel — Mac scrolling doesn't claim click-drags, so there's no conflict. Differences from the iOS backend: no system lift animation, no context-menu integration, and no edge auto-scroll.
 
 ## Behavior notes & limitations
 

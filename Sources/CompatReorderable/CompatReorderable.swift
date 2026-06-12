@@ -160,11 +160,11 @@ struct CompatReorderableForEach<Data: RandomAccessCollection, Content: View>: Vi
         for element: Data.Element,
         coordinator: CompatReorderCoordinator<Data.Element.ID>?
     ) -> some View {
-        #if os(watchOS)
-        // No drag interactions on watchOS: the cell itself is the floating
-        // preview, driven by a SwiftUI gesture.
+        #if os(watchOS) || os(macOS)
+        // No drag interactions on these platforms: the cell itself is the
+        // floating preview, driven by a SwiftUI gesture.
         content(element)
-            .modifier(CompatReorderWatchCellModifier(coordinator: coordinator, itemID: element.id))
+            .modifier(CompatReorderFallbackCellModifier(coordinator: coordinator, itemID: element.id))
         #else
         // The system drag preview represents the dragged item; its hidden
         // cell is the gap.
