@@ -343,17 +343,21 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             // The hover shadow is the SYSTEM's, via shadowPath — it fades it
             // immediately when a lift is released without dragging (a baked
             // image shadow would linger through the whole cancel animation).
-            // The path's corner radius is configurable; with a blurred
-            // shadow, a near-miss radius is imperceptible. The landed drop
-            // copy gets no shadow, matching the resting cell.
+            // visiblePath must be set to the same shape: without it, UIKit
+            // applies its own default clipping/rounding to the preview. The
+            // corner radius is detected from the rendered cell's own shape
+            // unless explicitly configured. The landed drop copy gets no
+            // shadow, matching the resting cell.
+            let radius = reorderCoordinator.previewCornerRadius
+                ?? Self.detectedCornerRadius(of: image)
+            let shape = UIBezierPath(
+                roundedRect: imageView.bounds,
+                cornerRadius: radius
+            )
             let parameters = UIDragPreviewParameters()
             parameters.backgroundColor = .clear
-            parameters.shadowPath = includeHoverShadow
-                ? UIBezierPath(
-                    roundedRect: imageView.bounds,
-                    cornerRadius: reorderCoordinator.previewCornerRadius
-                )
-                : UIBezierPath()
+            parameters.visiblePath = shape
+            parameters.shadowPath = includeHoverShadow ? shape : UIBezierPath()
 
             let target = UIDragPreviewTarget(
                 container: container,
@@ -416,6 +420,54 @@ struct CompatReorderGestureHost: UIViewRepresentable {
                 center: CGPoint(x: frameInContainer.midX, y: frameInContainer.midY)
             )
             return UITargetedDragPreview(view: imageView, parameters: parameters, target: target)
+        }
+
+        /// Detects the cell's corner radius from its rendered alpha channel:
+        /// for a rounded rect, the first opaque pixel down the left edge
+        /// sits at y == radius. Scans only the top-left corner region; the
+        /// >50% alpha threshold skips any faint baked-in shadow pixels.
+        /// Runs once per lift.
+        private static func detectedCornerRadius(of image: UIImage) -> CGFloat {
+            guard let cgImage = image.cgImage else { return 0 }
+
+            let scanSize = min(cgImage.height, min(cgImage.width, Int(60 * image.scale)))
+            guard scanSize > 0 else { return 0 }
+
+            var alphas = [UInt8](repeating: 0, count: scanSize * scanSize)
+            guard let context = CGContext(
+                data: &alphas,
+                width: scanSize,
+                height: scanSize,
+                bitsPerComponent: 8,
+                bytesPerRow: scanSize,
+                space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue
+            ) else { return 0 }
+
+            // Align the IMAGE's top-left with the context's top-left
+            // (CG contexts are bottom-left-origin).
+            context.draw(
+                cgImage,
+                in: CGRect(
+                    x: 0,
+                    y: CGFloat(scanSize) - CGFloat(cgImage.height),
+                    width: CGFloat(cgImage.width),
+                    height: CGFloat(cgImage.height)
+                )
+            )
+
+            // Bitmap memory is top-scanline-first and the image was drawn
+            // top-aligned, so row 0 is the image's top edge: walk the
+            // leftmost column downward. Antialiasing reaches >50% coverage
+            // ~√r pixels before the geometric touch point, so compensate —
+            // validated within ±0.2pt for radii 0–24 at 2x/3x.
+            for row in 0..<scanSize {
+                if alphas[row * scanSize] > 128 {
+                    let pixels = CGFloat(row)
+                    return (pixels + pixels.squareRoot() + 0.5) / image.scale
+                }
+            }
+            return 0
         }
 
         /// Deduplicates location reports: with a stationary finger and no

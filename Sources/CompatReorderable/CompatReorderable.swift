@@ -127,9 +127,10 @@ extension View {
         environment(\.compatReorderAnimations, animations)
     }
 
-    /// The corner radius of the system hover shadow under lifted items
-    /// (iOS/visionOS). Defaults to 12; match it to your cells' shape — with
-    /// a blurred shadow, a close value is indistinguishable.
+    /// Explicitly sets the corner radius of the system hover shadow under
+    /// lifted items (iOS/visionOS). By default the radius is detected
+    /// automatically from the rendered cell's shape; set this when the
+    /// detection doesn't fit your design.
     public func compatReorderPreviewCornerRadius(_ radius: CGFloat) -> some View {
         environment(\.compatReorderPreviewCornerRadius, radius)
     }
