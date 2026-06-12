@@ -119,13 +119,12 @@ Every timing the library owns lives in `CompatReorderAnimations`, with platform-
 ```swift
 var animations = CompatReorderAnimations()
 animations.gapReflow = .spring(response: 0.45, dampingFraction: 0.85)
-animations.dropReveal = .easeIn(duration: 0.25)
 
 ScrollView { ... }
     .compatReorderAnimations(animations)
 ```
 
-`gapReflow` and `dropReveal` apply everywhere; `lift` and `settle` drive the self-rendered watchOS/macOS backend (on iOS/visionOS those phases are the system's own drag animations).
+`gapReflow` applies everywhere; `lift` and `settle` drive the self-rendered watchOS/macOS backend (on iOS/visionOS those phases are the system's own drag animations).
 
 ## Behavior notes & limitations
 
@@ -134,7 +133,7 @@ ScrollView { ... }
 - Vertical containers only (vertical auto-scroll; the retarget heuristics assume column-ish layouts).
 - Single collection per container — the native `collectionID:`/sections overloads have no compat counterpart.
 - Items cannot be dragged out to other apps; reorder sessions are app-restricted by design.
-- The drag preview is a snapshot taken at lift; cells that animate their content will show a static image while dragged. (The drop animation re-snapshots, so content committed by the move — index badges, timestamps — appears immediately on release.)
+- Drag previews are rendered images of the cell content; cells that animate will show a static image while dragged. On release, the drop animation lands a freshly rendered copy with the *committed* content (index badges, timestamps), and the final swap with the live cell is pixel-identical. Cells using blur materials may render slightly differently in previews (ImageRenderer limitation).
 - One reorder container per scroll view: two compat containers sharing the same scroll view is unsupported (their interactions would land on the same hosting view).
 
 ## How it works

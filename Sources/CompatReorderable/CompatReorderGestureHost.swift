@@ -166,7 +166,10 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             _ interaction: UIDragInteraction,
             prefersFullSizePreviewsFor session: UIDragSession
         ) -> Bool {
-            true
+            // Native reorder feel: lift scales up in place, then the item
+            // shrinks to the system's carrying size while dragging, and
+            // grows back into the slot on drop.
+            false
         }
 
         func dragInteraction(
@@ -183,7 +186,8 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             if let preview = renderedPreview(
                 for: token,
                 frameInContainer: frameInContainer,
-                container: container
+                container: container,
+                includeHoverShadow: true
             ) {
                 return preview
             }
@@ -259,21 +263,14 @@ struct CompatReorderGestureHost: UIViewRepresentable {
         ) -> UIDropProposal {
             activeDropSession = session
             reportDragLocation(of: session)
-            let proposal = UIDropProposal(operation: .move)
-            proposal.prefersFullSizePreview = true
-            return proposal
+            // No prefersFullSizePreview: the carried item stays at the
+            // system's reduced size until it lands.
+            return UIDropProposal(operation: .move)
         }
 
         func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
             dropHandled = true
             reorderCoordinator?.commitDrop()
-            // Reveal the live cell as a delayed fade-in: the in-flight copy
-            // needs the glide to fade out, so the committed cell only ramps
-            // up in the second half — a handoff, never two items visible at
-            // full strength.
-            withAnimation(reorderCoordinator?.animations.dropReveal ?? CompatReorderAnimations().dropReveal) {
-                reorderCoordinator?.revealDraggedCell()
-            }
         }
 
         func dropInteraction(
@@ -292,31 +289,23 @@ struct CompatReorderGestureHost: UIViewRepresentable {
                 center: CGPoint(x: frameInContainer.midX, y: frameInContainer.midY)
             )
 
-            // The live cell is already revealed at the slot (with committed
-            // content), so the drop preview's only job is to get out of the
-            // way gracefully. A transparent view targeted at the slot makes
-            // the system's own morph crossfade the in-flight preview to
-            // nothing WHILE gliding — no opaque copy ever "sits" on the cell
-            // and pops off at the end. (Animating our preview views' alpha
-            // doesn't work: the system displays its own copies.) Sized like
-            // the lift canvas (cell + shadow margin) so the morph doesn't
-            // scale the card while fading.
-            let margin = Self.previewShadowMargin
-            let clearView = UIView(
-                frame: CGRect(
-                    x: 0,
-                    y: 0,
-                    width: frameInContainer.width + margin * 2,
-                    height: frameInContainer.height + margin * 2
-                )
-            )
-            clearView.backgroundColor = .clear
-
-            let parameters = UIDragPreviewParameters()
-            parameters.backgroundColor = .clear
-            parameters.shadowPath = UIBezierPath()
-
-            return UITargetedDragPreview(view: clearView, parameters: parameters, target: target)
+            // The item LANDS, native-style: a freshly rendered copy with the
+            // COMMITTED content (ImageRenderer draws our own view tree from
+            // current model values — unlike on-screen snapshots, it can't be
+            // stale) and without the hover shadow, so the glide reads as the
+            // card lowering into place. The cell underneath stays hidden
+            // until the animation completes; since the landed copy matches
+            // the cell pixel-for-pixel, the final swap is invisible — one
+            // item visible at all times.
+            if let landed = renderedPreview(
+                for: token,
+                frameInContainer: frameInContainer,
+                container: container,
+                includeHoverShadow: false
+            ) {
+                return landed
+            }
+            return defaultPreview.retargetedPreview(with: target)
         }
 
         /// The cell's SwiftUI content rendered synchronously to an image via
@@ -330,7 +319,8 @@ struct CompatReorderGestureHost: UIViewRepresentable {
         private func renderedPreview(
             for token: CompatReorderDragToken,
             frameInContainer: CGRect,
-            container: UIView
+            container: UIView,
+            includeHoverShadow: Bool
         ) -> UITargetedDragPreview? {
             guard let content = reorderCoordinator?.previewContent(for: token) else { return nil }
 
@@ -346,7 +336,11 @@ struct CompatReorderGestureHost: UIViewRepresentable {
                         width: frameInContainer.width,
                         height: frameInContainer.height
                     )
-                    .shadow(color: .black.opacity(0.22), radius: 14, y: 8)
+                    .shadow(
+                        color: .black.opacity(includeHoverShadow ? 0.22 : 0),
+                        radius: 14,
+                        y: 8
+                    )
                     .padding(shadowMargin)
                     .environment(
                         \.colorScheme,

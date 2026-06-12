@@ -95,17 +95,12 @@ extension ForEach where Content: View, Data.Element: Identifiable, ID == Data.El
 /// The animations a reorder container uses, overridable via
 /// ``SwiftUICore/View/compatReorderAnimations(_:)``. Defaults are tuned per
 /// platform: the system-drag backend (iOS/visionOS) animates its own lift,
-/// glide, and settle, so only `gapReflow` and `dropReveal` apply there;
-/// `lift` and `settle` drive the self-rendered fallback backend
-/// (watchOS/macOS), which defaults to slightly slower, calmer curves.
+/// glide, and drop, so only `gapReflow` applies there; `lift` and `settle`
+/// drive the self-rendered fallback backend (watchOS/macOS), which defaults
+/// to slightly slower, calmer curves.
 public struct CompatReorderAnimations: Sendable {
     /// Cells reflowing around the gap as the drag retargets.
     public var gapReflow: Animation
-
-    /// The committed cell fading in under the system drop glide
-    /// (iOS/visionOS only). Delayed by default so the in-flight copy fades
-    /// out first — a handoff, not two items at once.
-    public var dropReveal: Animation
 
     /// The cell lifting at drag start (watchOS/macOS backend only).
     public var lift: Animation
@@ -120,7 +115,6 @@ public struct CompatReorderAnimations: Sendable {
         #else
         gapReflow = .spring(response: 0.35, dampingFraction: 0.8)
         #endif
-        dropReveal = .easeIn(duration: 0.18).delay(0.12)
         lift = .snappy(duration: 0.3)
         settle = .spring(response: 0.5, dampingFraction: 0.85)
     }

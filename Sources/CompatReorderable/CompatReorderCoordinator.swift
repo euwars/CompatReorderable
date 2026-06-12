@@ -42,7 +42,6 @@ protocol CompatReorderDragDriving: AnyObject {
     func beginDrag(token: CompatReorderDragToken)
     func dragMoved(at point: CGPoint)
     func commitDrop()
-    func revealDraggedCell()
     func revertDrag()
     func finishDrag()
 }
@@ -142,17 +141,10 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
         }
     }
 
-    /// Unhides the dragged item's cell at drop time, before the system drop
-    /// animation finishes. The drag preview is a snapshot taken at lift, so
-    /// committed content (an index badge, a timestamp) would otherwise look
-    /// stale until the glide ends; revealing early lets the fresh cell fade
-    /// in at the slot while the preview converges onto it.
-    func revealDraggedCell() {
-        draggedID = nil
-    }
-
     /// Called after the drop or cancel animation completes: unhides the cell
-    /// (if not already revealed) and clears the drag state.
+    /// and clears the drag state. The drop preview is a freshly rendered
+    /// copy of the committed cell landed exactly on the slot, so this swap
+    /// is invisible.
     func finishDrag() {
         guard draggedID != nil || displayIDs != nil else { return }
         draggedID = nil
