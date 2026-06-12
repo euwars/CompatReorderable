@@ -127,6 +127,13 @@ extension View {
         environment(\.compatReorderAnimations, animations)
     }
 
+    /// The corner radius of the system hover shadow under lifted items
+    /// (iOS/visionOS). Defaults to 12; match it to your cells' shape — with
+    /// a blurred shadow, a close value is indistinguishable.
+    public func compatReorderPreviewCornerRadius(_ radius: CGFloat) -> some View {
+        environment(\.compatReorderPreviewCornerRadius, radius)
+    }
+
     /// The compat counterpart of the native
     /// `reorderContainer(for:isEnabled:move:)` (iOS 27, macOS 27,
     /// watchOS 27, visionOS 27). Apply to the container that holds a
@@ -261,6 +268,7 @@ struct CompatReorderContainerModifier<Item: Identifiable>: ViewModifier {
     let move: (CompatReorderDifference<Item.ID>) -> Void
 
     @Environment(\.compatReorderAnimations) private var animations
+    @Environment(\.compatReorderPreviewCornerRadius) private var previewCornerRadius
     @State private var coordinator = CompatReorderCoordinator<Item.ID>()
 
     func body(content: Content) -> some View {
@@ -269,6 +277,7 @@ struct CompatReorderContainerModifier<Item: Identifiable>: ViewModifier {
         // captures held at first appearance.
         coordinator.isReorderEnabled = isEnabled
         coordinator.animations = animations
+        coordinator.previewCornerRadius = previewCornerRadius
         coordinator.commitMove = { [move] sources, before in
             move(
                 CompatReorderDifference(

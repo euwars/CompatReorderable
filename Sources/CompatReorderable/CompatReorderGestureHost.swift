@@ -59,10 +59,6 @@ struct CompatReorderGestureHost: UIViewRepresentable {
         private var lastReportedPoint: CGPoint?
         private var dropHandled = false
         private var sessionGeneration = 0
-        /// Transparent canvas around the lift preview so its SwiftUI hover
-        /// shadow isn't clipped. The drop target must use the same canvas
-        /// size or the morph visibly scales the card during the fade.
-        private static let previewShadowMargin: CGFloat = 40
 
         /// Snapshots are drawn from and drop targets anchor to this view:
         /// the scroll view when there is one, else the interaction host.
@@ -322,13 +318,9 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             container: UIView,
             includeHoverShadow: Bool
         ) -> UITargetedDragPreview? {
-            guard let content = reorderCoordinator?.previewContent(for: token) else { return nil }
-
-            let shadowMargin = Self.previewShadowMargin
-            let canvasSize = CGSize(
-                width: frameInContainer.width + shadowMargin * 2,
-                height: frameInContainer.height + shadowMargin * 2
-            )
+            guard let reorderCoordinator,
+                  let content = reorderCoordinator.previewContent(for: token)
+            else { return nil }
 
             let renderer = ImageRenderer(
                 content: content
@@ -336,27 +328,32 @@ struct CompatReorderGestureHost: UIViewRepresentable {
                         width: frameInContainer.width,
                         height: frameInContainer.height
                     )
-                    .shadow(
-                        color: .black.opacity(includeHoverShadow ? 0.22 : 0),
-                        radius: 14,
-                        y: 8
-                    )
-                    .padding(shadowMargin)
                     .environment(
                         \.colorScheme,
                         traitCollection.userInterfaceStyle == .dark ? .dark : .light
                     )
             )
-            renderer.proposedSize = ProposedViewSize(canvasSize)
+            renderer.proposedSize = ProposedViewSize(frameInContainer.size)
             renderer.scale = window?.screen.scale ?? 3
             guard let image = renderer.uiImage else { return nil }
 
             let imageView = UIImageView(image: image)
-            imageView.frame = CGRect(origin: .zero, size: canvasSize)
+            imageView.frame = CGRect(origin: .zero, size: frameInContainer.size)
 
+            // The hover shadow is the SYSTEM's, via shadowPath — it fades it
+            // immediately when a lift is released without dragging (a baked
+            // image shadow would linger through the whole cancel animation).
+            // The path's corner radius is configurable; with a blurred
+            // shadow, a near-miss radius is imperceptible. The landed drop
+            // copy gets no shadow, matching the resting cell.
             let parameters = UIDragPreviewParameters()
             parameters.backgroundColor = .clear
-            parameters.shadowPath = UIBezierPath()
+            parameters.shadowPath = includeHoverShadow
+                ? UIBezierPath(
+                    roundedRect: imageView.bounds,
+                    cornerRadius: reorderCoordinator.previewCornerRadius
+                )
+                : UIBezierPath()
 
             let target = UIDragPreviewTarget(
                 container: container,

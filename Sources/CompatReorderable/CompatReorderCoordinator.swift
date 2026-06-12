@@ -35,6 +35,7 @@ final class CompatReorderDragToken {
 protocol CompatReorderDragDriving: AnyObject {
     var hasActiveDrag: Bool { get }
     var animations: CompatReorderAnimations { get }
+    var previewCornerRadius: CGFloat { get }
     func dragToken(at point: CGPoint) -> CompatReorderDragToken?
     func owns(_ token: CompatReorderDragToken) -> Bool
     func liftFrame(for token: CompatReorderDragToken) -> CGRect?
@@ -92,6 +93,7 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
     @ObservationIgnored var commitMove: ((_ sources: [ItemID], _ before: ItemID?) -> Void)?
     @ObservationIgnored var isReorderEnabled = true
     @ObservationIgnored var animations = CompatReorderAnimations()
+    @ObservationIgnored var previewCornerRadius: CGFloat = 12
 
     @ObservationIgnored private var lastMoveTime = Date.distantPast
 
@@ -258,4 +260,5 @@ extension CompatReorderCoordinator: CompatReorderDragDriving {
 extension EnvironmentValues {
     @Entry var compatReorderCoordinator: (any CompatReorderCoordinating)?
     @Entry var compatReorderAnimations = CompatReorderAnimations()
+    @Entry var compatReorderPreviewCornerRadius: CGFloat = 12
 }
