@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Test (macOS host, logic suite)
+        run: swift test
+
+      - name: Build (iOS Simulator)
+        run: >
+          xcodebuild -scheme CompatReorderable
+          -destination 'generic/platform=iOS Simulator'
+          build
+
+      - name: Build (watchOS, cross-compile)
+        run: >
+          swift build
+          --triple arm64-apple-watchos10.0-simulator
+          --sdk "$(xcrun --sdk watchsimulator --show-sdk-path)"
