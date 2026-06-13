@@ -267,6 +267,19 @@ struct CompatReorderGestureHost: UIViewRepresentable {
         func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
             dropHandled = true
             reorderCoordinator?.commitDrop()
+
+            // Measured: the drop copy visually seats ~340ms after release,
+            // but UIKit's drop-animation completion doesn't fire until
+            // ~1170ms — leaving the seated card shadowless for ~830ms, then
+            // popping the real cell's baked shadow in. Reveal the cell just
+            // after the seat instead; the identical seated copy on top makes
+            // the swap invisible, and the willAnimateDrop completion remains
+            // as an idempotent backstop. Voided if a newer session starts.
+            let generation = sessionGeneration
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self, generation == self.sessionGeneration else { return }
+                self.reorderCoordinator?.finishDrag()
+            }
         }
 
         func dropInteraction(
@@ -340,24 +353,41 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             let imageView = UIImageView(image: image)
             imageView.frame = CGRect(origin: .zero, size: frameInContainer.size)
 
-            // The hover shadow is the SYSTEM's, via shadowPath — it fades it
-            // immediately when a lift is released without dragging (a baked
-            // image shadow would linger through the whole cancel animation).
-            // visiblePath must be set to the same shape: without it, UIKit
-            // applies its own default clipping/rounding to the preview. The
-            // corner radius is detected from the rendered cell's own shape
-            // unless explicitly configured. The landed drop copy gets no
-            // shadow, matching the resting cell.
-            let radius = reorderCoordinator.previewCornerRadius
-                ?? Self.detectedCornerRadius(of: image)
-            let shape = UIBezierPath(
-                roundedRect: imageView.bounds,
-                cornerRadius: radius
-            )
+            // visiblePath defines the preview's shape (without it UIKit
+            // applies its own default rounding) AND drives the system's
+            // hover shadow, which UIKit fades immediately on lift-cancel —
+            // do NOT also set shadowPath for the lift: two shadow
+            // treatments fade on different schedules and the lingering
+            // returns. The corner radius is detected from the rendered
+            // cell's own shape unless explicitly configured. The landed
+            // drop copy gets an empty shadowPath: it must arrive shadowless,
+            // matching the resting cell.
             let parameters = UIDragPreviewParameters()
             parameters.backgroundColor = .clear
-            parameters.visiblePath = shape
-            parameters.shadowPath = includeHoverShadow ? shape : UIBezierPath()
+            if includeHoverShadow {
+                // Lift: visiblePath defines the preview's shape (without it
+                // UIKit applies its own default rounding) and drives the
+                // system hover shadow, which the system fades on lift-cancel.
+                let radius = reorderCoordinator.previewCornerRadius
+                    ?? Self.detectedCornerRadius(of: image)
+                parameters.visiblePath = UIBezierPath(
+                    roundedRect: imageView.bounds,
+                    cornerRadius: radius
+                )
+            } else {
+                // Landed drop copy: visiblePath for the correct shape
+                // (without it the system squares the corners during landing
+                // — measured) plus an empty shadowPath so it arrives
+                // shadowless. Measured as the only artifact-free shape/
+                // shadow combination.
+                let radius = reorderCoordinator.previewCornerRadius
+                    ?? Self.detectedCornerRadius(of: image)
+                parameters.visiblePath = UIBezierPath(
+                    roundedRect: imageView.bounds,
+                    cornerRadius: radius
+                )
+                parameters.shadowPath = UIBezierPath()
+            }
 
             let target = UIDragPreviewTarget(
                 container: container,
