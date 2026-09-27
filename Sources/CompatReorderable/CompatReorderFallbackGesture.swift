@@ -126,7 +126,7 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
 /// Reads the per-frame preview state in its own body, so high-frequency
 /// updates invalidate only this small view, never the cell tree.
 struct CompatReorderFallbackPreviewHost<ItemID: Hashable>: View {
-    let coordinator: CompatReorderCoordinator<ItemID>
+    @ObservedObject var coordinator: CompatReorderCoordinator<ItemID>
 
     var body: some View {
         if let preview = coordinator.fallbackPreview {

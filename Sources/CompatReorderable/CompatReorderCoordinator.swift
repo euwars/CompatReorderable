@@ -62,13 +62,12 @@ protocol CompatReorderDragDriving: AnyObject {
 /// Observed properties change rarely (drag begin/end, retarget) and may
 /// invalidate the cell tree; per-frame session locations only run
 /// `retarget`, which mutates state just when the gap actually moves.
-@Observable
-final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinating {
+final class CompatReorderCoordinator<ItemID: Hashable>: ObservableObject, CompatReorderCoordinating {
     // MARK: Observed by the cell tree (rare changes)
 
-    private(set) var draggedID: ItemID?
-    private(set) var displayIDs: [ItemID]?
-    private(set) var moveCount = 0
+    @Published private(set) var draggedID: ItemID?
+    @Published private(set) var displayIDs: [ItemID]?
+    @Published private(set) var moveCount = 0
 
     // MARK: Fallback-backend preview (watchOS/macOS)
 
@@ -76,7 +75,7 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
     /// item in a container-level overlay — always above every cell. (zIndex
     /// on cells is unreliable in lazy containers, which composite each lane
     /// separately.) Frame is in container coordinates.
-    var fallbackPreview: FallbackPreview?
+    @Published var fallbackPreview: FallbackPreview?
 
     struct FallbackPreview {
         var content: AnyView
@@ -84,18 +83,18 @@ final class CompatReorderCoordinator<ItemID: Hashable>: CompatReorderCoordinatin
         var isSettling = false
     }
 
-    @ObservationIgnored var previewContentProvider: ((ItemID) -> AnyView?)?
+    var previewContentProvider: ((ItemID) -> AnyView?)?
 
     // MARK: Unobserved bookkeeping
 
-    @ObservationIgnored var sourceIDs: [ItemID] = []
-    @ObservationIgnored var frames: [ItemID: CGRect] = [:]
-    @ObservationIgnored var commitMove: ((_ sources: [ItemID], _ before: ItemID?) -> Void)?
-    @ObservationIgnored var isReorderEnabled = true
-    @ObservationIgnored var animations = CompatReorderAnimations()
-    @ObservationIgnored var previewCornerRadius: CGFloat?
+    var sourceIDs: [ItemID] = []
+    var frames: [ItemID: CGRect] = [:]
+    var commitMove: ((_ sources: [ItemID], _ before: ItemID?) -> Void)?
+    var isReorderEnabled = true
+    var animations = CompatReorderAnimations()
+    var previewCornerRadius: CGFloat?
 
-    @ObservationIgnored private var lastMoveTime = Date.distantPast
+    private var lastMoveTime = Date.distantPast
 
     // MARK: Drag lifecycle
 

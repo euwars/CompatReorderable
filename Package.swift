@@ -9,7 +9,7 @@ let package = Package(
         // watchOS and macOS use a SwiftUI gesture backend (they have no drag
         // interactions — for watchOS that matches the native API's reduced
         // scope there).
-        .iOS(.v17),
+        .iOS(.v16),
         .visionOS(.v1),
         .watchOS(.v10),
         .macOS(.v14),

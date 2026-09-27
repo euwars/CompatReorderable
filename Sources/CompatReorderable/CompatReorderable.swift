@@ -194,7 +194,24 @@ struct CompatReorderableForEach<Data: RandomAccessCollection, Content: View>: Vi
     }
 
     var body: some View {
-        let coordinator = coordinator
+        if let coordinator {
+            Observed(coordinator: coordinator) { rows(coordinator) }
+        } else {
+            rows(nil)
+        }
+    }
+
+    /// Holds the coordinator as an observed object: an `ObservableObject`
+    /// (for iOS 16, which has no Observation) redraws only the views that
+    /// observe it, so the rows are built in here to follow a drag.
+    private struct Observed<Rows: View>: View {
+        @ObservedObject var coordinator: CompatReorderCoordinator<Data.Element.ID>
+        @ViewBuilder var rows: () -> Rows
+        var body: some View { rows() }
+    }
+
+    @ViewBuilder
+    private func rows(_ coordinator: CompatReorderCoordinator<Data.Element.ID>?) -> some View {
         ForEach(displayData(coordinator)) { element in
             cell(for: element, coordinator: coordinator)
                 .onGeometryChange(for: CGRect.self) { proxy in
@@ -302,10 +319,7 @@ struct CompatReorderContainerModifier<Item: Identifiable>: ViewModifier {
             }
         #endif
         #if !os(macOS)
-            .sensoryFeedback(.impact(weight: .light), trigger: coordinator.moveCount)
-            .sensoryFeedback(trigger: coordinator.draggedID) { _, lifted in
-                lifted != nil ? .impact(weight: .medium) : .impact(weight: .light)
-            }
+            .modifier(CompatReorderHaptics(moveCount: coordinator.moveCount, draggedID: coordinator.draggedID))
         #endif
     }
 }
@@ -344,3 +358,35 @@ enum CompatReorderEngine {
         items = reorderedItems
     }
 }
+
+#if !os(macOS)
+/// Light taps on each retarget and on the drop, a firmer one on the lift:
+/// SwiftUI's sensory feedback where it exists (iOS 17), UIKit's impact
+/// generator before that.
+struct CompatReorderHaptics<ItemID: Hashable>: ViewModifier {
+    let moveCount: Int
+    let draggedID: ItemID?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, watchOS 10.0, visionOS 26.0, *) {
+            content
+                .sensoryFeedback(.impact(weight: .light), trigger: moveCount)
+                .sensoryFeedback(trigger: draggedID) { _, lifted in
+                    lifted != nil ? .impact(weight: .medium) : .impact(weight: .light)
+                }
+        } else {
+            #if os(iOS)
+            content
+                .onChange(of: moveCount) { _ in
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+                .onChange(of: draggedID) { lifted in
+                    UIImpactFeedbackGenerator(style: lifted != nil ? .medium : .light).impactOccurred()
+                }
+            #else
+            content
+            #endif
+        }
+    }
+}
+#endif

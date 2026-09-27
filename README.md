@@ -1,6 +1,6 @@
 # CompatReorderable
 
-Drag-to-reorder for **any SwiftUI container** — `LazyVStack`, `LazyVGrid`, plain stacks, custom `Layout`s — on **iOS 17+**, mirroring the `reorderable()` / `reorderContainer(for:move:)` API that ships natively in the 2027 OS releases (iOS 27, iPadOS 27, macOS 27, watchOS 27, visionOS 27). When your deployment targets reach the 27 releases, you delete this dependency and drop the `compat` prefixes.
+Drag-to-reorder for **any SwiftUI container** — `LazyVStack`, `LazyVGrid`, plain stacks, custom `Layout`s — on **iOS 16+**, mirroring the `reorderable()` / `reorderContainer(for:move:)` API that ships natively in the 2027 OS releases (iOS 27, iPadOS 27, macOS 27, watchOS 27, visionOS 27). When your deployment targets reach the 27 releases, you delete this dependency and drop the `compat` prefixes.
 
 <p align="center">
   <img src="https://github.com/euwars/CompatReorderable/releases/download/1.0.2/compat-demo.gif" width="560" alt="Drag-to-reorder demo across waterfall, grid, and list containers">
@@ -42,7 +42,7 @@ The 2027 OS releases finally bring drag-to-reorder to every container — but on
 
 | | |
 |---|---|
-| iOS / iPadOS / Mac Catalyst | 17.0+ (system drag backend) |
+| iOS / iPadOS / Mac Catalyst | 16.0+ (system drag backend) |
 | visionOS | 1.0+ (system drag backend, compiled but lightly tested) |
 | watchOS | 10.0+ (SwiftUI gesture backend, see below) |
 | macOS | 14.0+ (SwiftUI gesture backend, see below) |
