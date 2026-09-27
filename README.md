@@ -43,6 +43,7 @@ The 2027 OS releases finally bring drag-to-reorder to every container — but on
 | | |
 |---|---|
 | iOS / iPadOS / Mac Catalyst | 16.0+ (system drag backend) |
+| tvOS | 16.0+ (builds; no reordering: tvOS has no drag and drop) |
 | visionOS | 1.0+ (system drag backend, compiled but lightly tested) |
 | watchOS | 10.0+ (SwiftUI gesture backend, see below) |
 | macOS | 14.0+ (SwiftUI gesture backend, see below) |

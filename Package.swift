@@ -10,6 +10,9 @@ let package = Package(
         // interactions — for watchOS that matches the native API's reduced
         // scope there).
         .iOS(.v16),
+        // tvOS has no drag and drop to build on, and no way to drag a
+        // cell: there the modifiers leave the container as it is.
+        .tvOS(.v16),
         .visionOS(.v1),
         .watchOS(.v10),
         .macOS(.v14),

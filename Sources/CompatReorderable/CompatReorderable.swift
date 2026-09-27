@@ -376,7 +376,7 @@ struct CompatReorderHaptics<ItemID: Hashable>: ViewModifier {
     let draggedID: ItemID?
 
     func body(content: Content) -> some View {
-        if #available(iOS 17.0, watchOS 10.0, visionOS 26.0, *) {
+        if #available(iOS 17.0, tvOS 17.0, watchOS 10.0, visionOS 26.0, *) {
             content
                 .sensoryFeedback(.impact(weight: .light), trigger: moveCount)
                 .sensoryFeedback(trigger: draggedID) { _, lifted in

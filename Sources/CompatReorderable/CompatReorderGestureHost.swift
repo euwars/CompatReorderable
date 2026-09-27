@@ -347,7 +347,8 @@ struct CompatReorderGestureHost: UIViewRepresentable {
                     )
             )
             renderer.proposedSize = ProposedViewSize(frameInContainer.size)
-            renderer.scale = window?.screen.scale ?? 3
+            // The view's own scale: visionOS has no screen to ask.
+            renderer.scale = traitCollection.displayScale
             guard let image = renderer.uiImage else { return nil }
 
             let imageView = UIImageView(image: image)
