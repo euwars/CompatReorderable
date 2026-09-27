@@ -230,13 +230,21 @@ struct CompatReorderableForEach<Data: RandomAccessCollection, Content: View>: Vi
         #if os(watchOS) || os(macOS)
         // No drag interactions on these platforms: the cell itself is the
         // floating preview, driven by a SwiftUI gesture.
-        content(element)
-            .modifier(CompatReorderFallbackCellModifier(coordinator: coordinator, itemID: element.id))
+        if let coordinator {
+            content(element)
+                .modifier(CompatReorderFallbackCellModifier(coordinator: coordinator, itemID: element.id))
+        } else {
+            content(element)
+        }
         #else
         // The system drag preview represents the dragged item; its hidden
         // cell is the gap.
-        content(element)
-            .opacity(coordinator?.draggedID == element.id ? 0 : 1)
+        if let coordinator {
+            content(element)
+                .modifier(CompatReorderCellGap(coordinator: coordinator, itemID: element.id))
+        } else {
+            content(element)
+        }
         #endif
     }
 
@@ -390,3 +398,16 @@ struct CompatReorderHaptics<ItemID: Hashable>: ViewModifier {
     }
 }
 #endif
+
+/// The dragged item's cell, hidden: the gap the system's drag preview
+/// comes from and lands in. Each cell observes the coordinator itself, so
+/// the lift and the drop redraw it wherever the cells are built (a lazy
+/// container builds them apart from the `ForEach` that lists them).
+struct CompatReorderCellGap<ItemID: Hashable>: ViewModifier {
+    @ObservedObject var coordinator: CompatReorderCoordinator<ItemID>
+    let itemID: ItemID
+
+    func body(content: Content) -> some View {
+        content.opacity(coordinator.draggedID == itemID ? 0 : 1)
+    }
+}

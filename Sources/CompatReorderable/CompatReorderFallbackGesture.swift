@@ -20,13 +20,15 @@
 import SwiftUI
 
 struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
-    let coordinator: CompatReorderCoordinator<ItemID>?
+    /// Observed by each cell: the lift and the drop must redraw it wherever
+    /// the container builds it.
+    @ObservedObject var coordinator: CompatReorderCoordinator<ItemID>
     let itemID: ItemID
 
     @State private var liftFrame: CGRect = .zero
 
     func body(content: Content) -> some View {
-        let isDragged = coordinator?.draggedID == itemID
+        let isDragged = coordinator.draggedID == itemID
         let base = content
             // The overlay preview represents the dragged item; its hidden
             // cell is the gap.
@@ -38,7 +40,7 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
             // state stays stranded (frozen preview, all future drags
             // blocked).
             .onDisappear {
-                guard let coordinator, coordinator.draggedID == itemID else { return }
+                guard coordinator.draggedID == itemID else { return }
                 coordinator.revertDrag()
                 coordinator.finishDrag()
             }
@@ -51,8 +53,7 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
     }
 
     private func lift() {
-        guard let coordinator,
-              coordinator.isReorderEnabled,
+        guard coordinator.isReorderEnabled,
               let content = coordinator.previewContentProvider?(itemID)
         else { return }
         liftFrame = coordinator.frames[itemID] ?? .zero
@@ -63,15 +64,15 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
     }
 
     private func follow(_ drag: DragGesture.Value) {
-        coordinator?.fallbackPreview?.frame = liftFrame.offsetBy(
+        coordinator.fallbackPreview?.frame = liftFrame.offsetBy(
             dx: drag.translation.width,
             dy: drag.translation.height
         )
-        coordinator?.dragMoved(at: drag.location)
+        coordinator.dragMoved(at: drag.location)
     }
 
     private func end() {
-        guard let coordinator, coordinator.draggedID == itemID else { return }
+        guard coordinator.draggedID == itemID else { return }
         coordinator.commitDrop()
 
         // Settle: glide the preview into the item's slot, then unhide.
@@ -94,7 +95,7 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
                 )
             )
             .onChanged { value in
-                guard case .second(true, let drag) = value, let coordinator else { return }
+                guard case .second(true, let drag) = value else { return }
                 if coordinator.draggedID == nil {
                     lift()
                 }
@@ -110,8 +111,7 @@ struct CompatReorderFallbackCellModifier<ItemID: Hashable>: ViewModifier {
             coordinateSpace: .named(CompatReorder.coordinateSpaceName)
         )
         .onChanged { drag in
-            guard let coordinator else { return }
-            if coordinator.draggedID == nil {
+                        if coordinator.draggedID == nil {
                 lift()
             }
             guard coordinator.draggedID == itemID else { return }
