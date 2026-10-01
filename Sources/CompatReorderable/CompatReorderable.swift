@@ -214,9 +214,7 @@ struct CompatReorderableForEach<Data: RandomAccessCollection, Content: View>: Vi
     private func rows(_ coordinator: CompatReorderCoordinator<Data.Element.ID>?) -> some View {
         ForEach(displayData(coordinator)) { element in
             cell(for: element, coordinator: coordinator)
-                .onGeometryChange(for: CGRect.self) { proxy in
-                    proxy.frame(in: .named(CompatReorder.coordinateSpaceName))
-                } action: { frame in
+                .reportsFrame { frame in
                     coordinator?.frames[element.id] = frame
                 }
         }
@@ -409,5 +407,23 @@ struct CompatReorderCellGap<ItemID: Hashable>: ViewModifier {
 
     func body(content: Content) -> some View {
         content.opacity(coordinator.draggedID == itemID ? 0 : 1)
+    }
+}
+
+private extension View {
+    /// Reports the view's frame in the reorder container's space as it
+    /// changes (iOS 16 and later; elsewhere the frames are not tracked, so
+    /// a drag never starts and the container is left as it is).
+    @ViewBuilder
+    func reportsFrame(_ action: @escaping (CGRect) -> Void) -> some View {
+        if #available(iOS 16.0, tvOS 16.0, *) {
+            onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .named(CompatReorder.coordinateSpaceName))
+            } action: { frame in
+                action(frame)
+            }
+        } else {
+            self
+        }
     }
 }

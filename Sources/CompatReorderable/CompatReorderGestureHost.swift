@@ -331,6 +331,9 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             container: UIView,
             includeHoverShadow: Bool
         ) -> UITargetedDragPreview? {
+            // Before iOS 16 no image of the cell can be made: UIKit's own
+            // preview instead.
+            guard #available(iOS 16.0, *) else { return nil }
             guard let reorderCoordinator,
                   let content = reorderCoordinator.previewContent(for: token)
             else { return nil }

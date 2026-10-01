@@ -8,8 +8,9 @@ let package = Package(
         // iOS/iPadOS/Catalyst/visionOS use the system drag-and-drop backend;
         // watchOS and macOS use a SwiftUI gesture backend (they have no drag
         // interactions — for watchOS that matches the native API's reduced
-        // scope there).
-        .iOS(.v16),
+        // scope there). iOS 15 links but does not reorder: the modifiers
+        // leave the container as it is there.
+        .iOS(.v15),
         // tvOS has no drag and drop to build on, and no way to drag a
         // cell: there the modifiers leave the container as it is.
         .tvOS(.v16),
