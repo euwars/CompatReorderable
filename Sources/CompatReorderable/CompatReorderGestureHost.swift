@@ -59,6 +59,10 @@ struct CompatReorderGestureHost: UIViewRepresentable {
         private var lastReportedPoint: CGPoint?
         private var dropHandled = false
         private var sessionGeneration = 0
+        /// The item a drag session began with, not yet taken out of the
+        /// layout: that waits for the session to reach this container's
+        /// drop interaction (`beginPendingDrag(for:)`).
+        private var pendingToken: CompatReorderDragToken?
 
         /// Snapshots are drawn from and drop targets anchor to this view:
         /// the scroll view when there is one, else the interaction host.
@@ -196,8 +200,24 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             else { return }
             sessionGeneration += 1
             dropHandled = false
-            reorderCoordinator?.beginDrag(token: token)
+            // Not begun here: iOS 27's "Ask Siri" in a context menu runs
+            // this same sequence on a session that is never dragged, to
+            // hand Siri what would be. Begun here, the cell hid while the
+            // menu was open, the menu was rebuilt under Siri's, and UIKit
+            // threw (scrolling the rebuilt menu to a row it no longer had).
+            // A reorder's session reaches the drop interaction at once.
+            pendingToken = token
             startDisplayLink()
+        }
+
+        /// Takes the dragged item out of the layout once its session is a
+        /// drag over this container, as only a reorder's is.
+        private func beginPendingDrag(for session: UIDropSession) {
+            guard let token = pendingToken,
+                  session.localDragSession?.items.first.flatMap(reorderToken(of:)) === token
+            else { return }
+            pendingToken = nil
+            reorderCoordinator?.beginDrag(token: token)
         }
 
         func dragInteraction(
@@ -206,6 +226,7 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             willEndWith operation: UIDropOperation
         ) {
             stopDisplayLink()
+            pendingToken = nil
 
             // Safety net: if a foreign drop target claims the session, no
             // local performDrop or cancel animation will ever run and the
@@ -251,6 +272,7 @@ struct CompatReorderGestureHost: UIViewRepresentable {
 
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnter session: UIDropSession) {
             activeDropSession = session
+            beginPendingDrag(for: session)
         }
 
         func dropInteraction(
@@ -258,6 +280,7 @@ struct CompatReorderGestureHost: UIViewRepresentable {
             sessionDidUpdate session: UIDropSession
         ) -> UIDropProposal {
             activeDropSession = session
+            beginPendingDrag(for: session)
             reportDragLocation(of: session)
             // No prefersFullSizePreview: the carried item stays at the
             // system's reduced size until it lands.
